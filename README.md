@@ -1,2 +1,3 @@
-# brevis-simple-swarm
-A simple swarm in Brevis
+# brevis-slider-swarm
+
+Control a swarm in Brevis with sliders
