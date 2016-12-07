@@ -1,9 +1,11 @@
-(ns brevis-simple-swarm.core
+(ns brevis-slider-swarm.core
   (:gen-class)
+  (:require [seesaw.core :as seesaw]
+            [seesaw.mig :as mig])
   (:use [brevis.graphics.basic-3D]
         [brevis.physics collision core space utils]
         [brevis.shape box sphere cone]
-        [brevis core osd vector camera utils display image]))
+        [brevis core osd vector camera utils display image random]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ## Swarm
@@ -19,11 +21,35 @@
 
 (def num-birds (atom 500))
 
-(def avoidance-distance (atom 25))
+(def centering-weight (atom 10))
+(def avoidance-weight (atom 10))
+(def straying-weight (atom 1))
+
 (def boundary (atom 300))
 
 (def max-velocity (atom 5))
 (def max-acceleration (atom 10))
+
+(def control-frame (atom nil))
+
+(defn make-frame []
+  (seesaw/frame 
+    :title "Brevis Swarm"
+    :content
+    (mig/mig-panel
+      :items [["<html>Slide the sliders to change the weights for the swarm</html>" "span, growx"]
+              ["Centering" "gap 10"]
+              [(seesaw/slider :id :centering   :min -500 :max 500 :paint-ticks? true :major-tick-spacing 200 :paint-labels? true) "span, growx"]
+              ["Avoidance" "gap 10"] 
+              [(seesaw/slider :id :avoidance :min -500 :max 500 :paint-ticks? true :major-tick-spacing 200 :paint-labels? true) "span, growx"]
+              ["Straying" "gap 10"]
+              [(seesaw/slider :id :straying  :min -500 :max 500 :paint-ticks? true :major-tick-spacing 200 :paint-labels? true) "span, growx"]])))
+
+(defn update-weights [root]
+  (let [{:keys [centering avoidance straying]} (seesaw/value root)] ; <- Use (value) to get map of values
+    (reset! centering-weight centering)
+    (reset! avoidance-weight avoidance)
+    (reset! straying-weight straying)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ## Birds
@@ -86,26 +112,25 @@
 (defn fly
   "Change the acceleration of a bird."
   [bird]
-  (let [bird-pos (get-position bird)
+  (let [nbrs (filter bird? (get-neighbor-objects bird))
+        bird-pos (get-position bird)
+
+        neighbor-positions (map get-position nbrs)
+        neighbor-center (if (zero? (count neighbor-positions))
+                          (vec3 0 0 0)
+                          (mul-vec3 (apply add-vec3 neighbor-positions)
+                                    (/ (count neighbor-positions))))
         
         closest-bird (get-closest-neighbor bird)
         
-        new-acceleration (if-not closest-bird
-                           ;; No neighbor, move randomly
-                           (elmul (vec3 (- (rand) 0.5) (- (rand) 0.5) (- (rand) 0.5))
-                                  (mul bird-pos -1.0))
-                           (let [dvec (sub bird-pos (get-position closest-bird)) 
-                                 len (length dvec)]
-                             (add (sub (get-velocity closest-bird) (get-velocity bird)); velocity matching
-                                  (if (<= len @avoidance-distance)
-                                    ;; If far from neighbor, get closer
-                                    dvec
-                                    ;; If too close to neighbor, move away
-                                    (add (mul dvec -1.0)
-                                         (vec3 (rand 0.1) (rand 0.1) (rand 0.1)))))));; add a small random delta so we don't get into a loop                                    
-        new-acceleration (if (zero? (length new-acceleration))
-                           new-acceleration
-                           (mul new-acceleration (/ 1 (length new-acceleration))))]    
+        new-acceleration (add-vec3 (mul-vec3 (vec3 (- (lrand) 0.5) (- (lrand) 0.5) (- (lrand) 0.5))
+                                             @straying-weight)
+                                   (mul-vec3 (sub-vec3 bird-pos neighbor-center)
+                                             @centering-weight)
+                                   (if closest-bird
+                                     (mul-vec3 (sub-vec3 bird-pos (get-position closest-bird))
+                                               @avoidance-weight)
+                                     (vec3 0 0 0)))]    
     (set-velocity
       (set-acceleration
         (if (or (> (java.lang.Math/abs (x-val bird-pos)) @boundary) 
@@ -143,6 +168,18 @@
   (init-view)  
 
   (set-camera-information (vec3 -10.0 57.939613 -890.0) (vec4 1.0 0.0 0.0 0.0))
+  
+  (let [root (make-frame)]
+    (seesaw/listen (map #(seesaw/select root [%]) [:#centering :#avoidance :#straying]) :change
+                   (fn [e]
+                     (update-weights root)))
+    (reset! control-frame root)
+    (seesaw/invoke-later
+      (-> root
+        seesaw/pack!
+        seesaw/show!)))
+  
+  (add-destroy-hook (fn [] (seesaw/dispose! @control-frame))) 
   
   (set-dt 1)
   (set-neighborhood-radius 50)
